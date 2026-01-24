@@ -1,43 +1,70 @@
-# Voice Agent - Auto Service Center
+# Voice AI Agent - Auto Service Center
 
-A voice-based agentic application that automates customer interactions for an auto service center call center using AI-powered conversation and vehicle information management.
+A voice-based AI application that automates customer interactions for an auto service center using real-time conversation and vehicle information management.
+
+## 🚧 Development Status
+
+**This project is currently in trial phase development. Many more updates and features are incoming.**
 
 ## Overview
 
-This application uses LiveKit's real-time voice agents powered by Google's Gemini model to handle customer calls. The agent can:
+This application uses LiveKit's real-time voice agents powered by Google's Gemini model to handle customer calls. The AI agent can:
+
 - Welcome customers and collect vehicle information
 - Look up vehicles by VIN
 - Create new vehicle records
-- Answer customer inquiries and direct them to appropriate departments
+- Answer inquiries and direct customers to appropriate departments
 
-## Features
+## Tech Stack
 
-- **Voice I/O**: Real-time voice conversation using LiveKit
-- **AI Agent**: Google Gemini 2.5 Flash with voice capabilities
-- **Vehicle Management**: SQLite database for storing vehicle information
-- **Function Tools**: LLM-integrated tools for database operations
+- **Backend**: Python, Flask, LiveKit Agents SDK
+- **Frontend**: React, Vite
+- **AI Model**: Google Gemini 2.5 Flash
+- **Database**: SQLite
+- **Real-time Communication**: LiveKit
+
+## Project Structure
+
+```
+Voice-AI-Agent/
+├── backend/
+│   ├── agent.py        # Voice agent orchestration
+│   ├── server.py       # Flask server for token generation
+│   ├── api.py          # LLM function tools
+│   ├── db_driver.py    # SQLite database driver
+│   └── prompts.py      # System instructions
+├── frontend/
+│   ├── src/            # React application
+│   └── vite.config.js  # Vite configuration
+└── .env                # Environment variables
+```
 
 ## Prerequisites
 
 - Python 3.10+
-- LiveKit account and credentials
+- Node.js 18+
+- LiveKit account
 - Google API key for Gemini
 
 ## Installation
 
-1. Clone the repository
-2. Create a virtual environment:
+1. **Clone the repository**
+
+2. **Backend setup**:
    ```bash
+   cd backend
    python -m venv .venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-   ```
-
-3. Install dependencies:
-   ```bash
    pip install -r requirements.txt
    ```
 
-4. Configure environment variables in `.env`:
+3. **Frontend setup**:
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+4. **Configure environment variables** in `.env`:
    ```
    LIVEKIT_URL=your_livekit_url
    LIVEKIT_API_KEY=your_api_key
@@ -47,19 +74,20 @@ This application uses LiveKit's real-time voice agents powered by Google's Gemin
 
 ## Running the Application
 
+You need **three terminals** running simultaneously:
+
 ```bash
-python agent.py
+# Terminal 1 - Flask server
+cd backend
+python server.py
+
+# Terminal 2 - LiveKit agent
+cd backend
+python agent.py dev
+
+# Terminal 3 - Frontend
+cd frontend
+npm run dev
 ```
 
-## Project Structure
-
-- `agent.py` - Main application entry point and agent orchestration
-- `api.py` - LLM function tools and assistant functions
-- `db_driver.py` - SQLite database driver for vehicle management
-- `prompts.py` - System instructions and conversation prompts
-- `requirements.txt` - Python dependencies
-
-## Database
-
-The application uses SQLite to store vehicle information. The database file (`auto_db.sqlite`) is automatically created on first run.
 
