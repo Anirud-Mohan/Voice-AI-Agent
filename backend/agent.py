@@ -23,21 +23,22 @@ async def entrypoint(ctx: JobContext):
     participant = await ctx.wait_for_participant()
 
     user_identifier = participant.identity or f"web-{participant.sid}"
-    display_name = getattr(participant, "name", None) or user_identifier
-    logger.info(f"User connected: {user_identifier}")
+    display_name = participant.name or user_identifier
+    logger.info(f"User connected: {user_identifier}, display_name: {display_name}")
+
+    # Build personalized instructions with user's name
+    personalized_welcome = f"Hi {display_name}! {WELCOME_MESSAGE}"
+    personalized_instructions = f"""{INSTRUCTIONS}
+
+## GREETING:
+When starting the conversation, greet the user warmly by saying: "{personalized_welcome}"
+"""
 
     model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025", 
         voice="Puck", 
         temperature=0.4,
-        instructions=INSTRUCTIONS,
-    )
-
-    initial_ctx = llm.ChatContext()
-    personalized_welcome = f"Hi {display_name}, {WELCOME_MESSAGE}" if display_name else WELCOME_MESSAGE
-    initial_ctx.add_message(
-        role="system",
-        content=f"Start by greeting the user: {personalized_welcome}"
+        instructions=personalized_instructions,
     )
 
     assistant_fnc = AssistantFnc()
@@ -50,9 +51,8 @@ async def entrypoint(ctx: JobContext):
     
     tools = llm.find_function_tools(assistant_fnc)
     agent = Agent(
-        instructions=INSTRUCTIONS,
+        instructions=personalized_instructions,
         tools=tools,
-        chat_ctx=initial_ctx, 
     )
 
     session = AgentSession(llm=model)
@@ -109,23 +109,23 @@ async def entrypoint(ctx: JobContext):
         else:
             find_profile(msg)
 
-        def find_profile(msg: llm.ChatMessage):
-            session.conversation.item.create(
-                llm.ChatMessage(
-                    role='system',
-                    content=LOOKUP_VIN_MESSAGE(msg)
-                )
+    def find_profile(msg: llm.ChatMessage):
+        session.conversation.item.create(
+            llm.ChatMessage(
+                role='system',
+                content=LOOKUP_VIN_MESSAGE(msg)
             )
-            session.response.create()
+        )
+        session.response.create()
 
-        def handle_query(msg: llm.ChatMessage):
-            session.conversation.item.create(
-                llm.ChatMessage(
-                    role='user',
-                    content=msg.content
-                )
+    def handle_query(msg: llm.ChatMessage):
+        session.conversation.item.create(
+            llm.ChatMessage(
+                role='user',
+                content=msg.content
             )
-            session.response.create()
+        )
+        session.response.create()
     
     # Trigger welcome (returns SpeechHandle, non-blocking)
     logger.info("Triggering welcome reply...")

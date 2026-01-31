@@ -34,6 +34,8 @@ class AssistantFnc:
         self._session_id: Optional[str] = None
         self._session_manager = SessionManager()
         self._guardrails = Guardrails()
+        # Cache for pending vehicle info from NHTSA decode
+        self._pending_vehicle = None
     
     def set_session(self, user_identifier: str, identifier_type: str = "web"):
         """Initialize or resume a session for the user"""
@@ -100,6 +102,9 @@ class AssistantFnc:
                 CarDetails.Owner: result.owner_name
             }
             
+            # Clear any pending vehicle
+            self._pending_vehicle = None
+            
             # Link to session
             if self._session_id:
                 self._session_manager.link_vehicle_to_session(self._session_id, vin)
@@ -111,8 +116,15 @@ class AssistantFnc:
         vehicle_info = await NHTSAApi.decode_vin(vin)
         
         if vehicle_info:
-            logger.info("VIN decoded via NHTSA: %s %s %s", vehicle_info.year, vehicle_info.make, vehicle_info.model)
-            return f"I found a {vehicle_info.year} {vehicle_info.make} {vehicle_info.model} but it's not in our system yet. Would you like me to create a profile for this vehicle?"
+            # Cache the decoded info for later use in create_car
+            self._pending_vehicle = {
+                "vin": vin,
+                "make": vehicle_info.make,
+                "model": vehicle_info.model,
+                "year": vehicle_info.year
+            }
+            logger.info("VIN decoded via NHTSA: %s %s %s (cached for profile creation)", vehicle_info.year, vehicle_info.make, vehicle_info.model)
+            return f"I found a {vehicle_info.year} {vehicle_info.make} {vehicle_info.model} but it's not in our system yet. Would you like me to create a profile for this vehicle? I'll need your name and current mileage."
         
         logger.info("Car not found for VIN: %s", vin)
         return "I couldn't find that VIN. Please double-check the number. It should be 17 characters."
@@ -158,18 +170,33 @@ class AssistantFnc:
             return "No vehicle is currently loaded. Please provide a VIN first."
         return f"The car details are: {self.get_car_str()}"
     
-    @llm.function_tool(description="Create a new car record in the system")
+    @llm.function_tool(description="Create a new car profile in the system. If the VIN was just looked up, vehicle details are auto-filled. Always ask for owner_name and mileage before calling this.")
     async def create_car(
         self, 
-        vin: Annotated[str, "The VIN of the car"],
-        make: Annotated[str, "The make of the car"],
-        model: Annotated[str, "The model of the car"],
-        year: Annotated[int, "The year of the car"],
-        owner_name: Annotated[str, "The name of the vehicle owner"] = "",
+        owner_name: Annotated[str, "The name of the vehicle owner - REQUIRED, must ask user"],
+        mileage: Annotated[int, "The current mileage of the vehicle - REQUIRED, must ask user"],
+        vin: Annotated[str, "The VIN of the car (optional if just looked up)"] = None,
+        make: Annotated[str, "The make of the car (optional if just looked up)"] = None,
+        model: Annotated[str, "The model of the car (optional if just looked up)"] = None,
+        year: Annotated[int, "The year of the car (optional if just looked up)"] = None,
         owner_phone: Annotated[str, "The phone number of the owner"] = "",
-        mileage: Annotated[int, "The current mileage of the vehicle"] = 0
     ):
-        logger.info("create car - vin: %s, make: %s, model: %s, year: %s", vin, make, model, year)
+        # Use pending vehicle info if available and params not provided
+        if self._pending_vehicle:
+            vin = vin or self._pending_vehicle.get("vin")
+            make = make or self._pending_vehicle.get("make")
+            model = model or self._pending_vehicle.get("model")
+            year = year or self._pending_vehicle.get("year")
+        
+        # Validate required fields
+        if not vin or not make or not model or not year:
+            return "I need the VIN, make, model, and year to create a profile. Please provide the VIN first so I can look up the vehicle details."
+        
+        if not owner_name:
+            return "I need your name to create the profile. What name should I register this vehicle under?"
+        
+        logger.info("create car - vin: %s, make: %s, model: %s, year: %s, owner: %s, mileage: %s", 
+                    vin, make, model, year, owner_name, mileage)
         
         # Clean VIN
         vin = vin.upper().replace(" ", "").replace("-", "")
@@ -186,12 +213,15 @@ class AssistantFnc:
                 CarDetails.Owner: result.owner_name
             }
             
+            # Clear pending vehicle
+            self._pending_vehicle = None
+            
             # Link to session
             if self._session_id:
                 self._session_manager.link_vehicle_to_session(self._session_id, vin)
             
             logger.info("Successfully created car: %s", result)
-            return f"I've created a profile for your {year} {make} {model}. How can I help you today?"
+            return f"I've created a profile for your {year} {make} {model}, registered to {owner_name} with {mileage:,} miles. How can I help you today?"
         except Exception as e:
             logger.error("Error creating car: %s", e, exc_info=True)
             return f"There was an issue creating the vehicle profile. The VIN might already exist in our system."
