@@ -10,19 +10,22 @@ from livekit.agents import (
 from livekit.plugins import google
 from api import AssistantFnc
 from prompts import WELCOME_MESSAGE, INSTRUCTIONS, LOOKUP_VIN_MESSAGE
+from guardrails import GuardrailStatus
 from dotenv import load_dotenv
 import logging
+import asyncio
 
 load_dotenv()
 logger = logging.getLogger("voice-agent")
 
 async def entrypoint(ctx: JobContext):
     await ctx.connect(auto_subscribe=AutoSubscribe.SUBSCRIBE_ALL)
-    await ctx.wait_for_participant()
+    participant = await ctx.wait_for_participant()
 
-    # 1. Initialize the Model
-    # Remove 'modalities' to use the safe defaults (Audio + Text).
-    # Explicitly set the model to a known working version.
+    user_identifier = participant.identity or f"web-{participant.sid}"
+    display_name = getattr(participant, "name", None) or user_identifier
+    logger.info(f"User connected: {user_identifier}")
+
     model = google.realtime.RealtimeModel(
         model="gemini-2.5-flash-native-audio-preview-12-2025", 
         voice="Puck", 
@@ -30,39 +33,77 @@ async def entrypoint(ctx: JobContext):
         instructions=INSTRUCTIONS,
     )
 
-    # 2. Define Initial Chat Context (The Welcome Message)
-    # We create a ChatContext object and append the welcome message here.
     initial_ctx = llm.ChatContext()
+    personalized_welcome = f"Hi {display_name}, {WELCOME_MESSAGE}" if display_name else WELCOME_MESSAGE
     initial_ctx.add_message(
-        role="assistant",
-        content=WELCOME_MESSAGE,
+        role="system",
+        content=f"Start by greeting the user: {personalized_welcome}"
     )
 
-    # 3. Define the Agent
     assistant_fnc = AssistantFnc()
+    # Initialize session management
+    session_id = assistant_fnc.set_session(user_identifier, identifier_type="web")
+    logger.info(f"Session initialized: {session_id}")
+    
+    # Log the welcome message
+    assistant_fnc.log_message("assistant", personalized_welcome)
+    
     tools = llm.find_function_tools(assistant_fnc)
-    # Pass the initial_ctx here. The Agent handles the history now.
     agent = Agent(
         instructions=INSTRUCTIONS,
         tools=tools,
-        # tools=llm.find_function_tools([assistant_fnc.create_car, assistant_fnc.get_car_details, assistant_fnc.has_car, assistant_fnc.lookup_car]),
         chat_ctx=initial_ctx, 
     )
 
-    # 4. Start the Session
     session = AgentSession(llm=model)
     await session.start(room=ctx.room, agent=agent)
-    
-    # 5. Trigger the Reply
-    # This will make the agent speak the welcome message (or acknowledge it).
-    await session.generate_reply()
+    logger.info("Session started")
 
-
-    @session.on('user_speeech_committed')
-    def on_user_speech_committed(msg: llm.ChatMessage):
+    @session.on('user_speech_committed')
+    def on_user_speech_committed(msg: llm.ChatMessage):        
+        logger.info(f"user_speech_committed fired, content={msg.content[:50] if msg.content else 'None'}...")
+            
         if isinstance(msg.content, list):
-            msg.content = '\n'.join('[image]' if isinstance(x, llm.ChatImage) else x for x in msg)
+            msg.content = '\n'.join('[image]' if isinstance(x, llm.ChatImage) else x for x in msg.content)
 
+        user_text = msg.content if isinstance(msg.content, str) else str(msg.content)
+        
+        # Ignore empty/whitespace transcripts
+        if not user_text or not user_text.strip():
+            return
+
+        # Apply guardrails to user input
+        guardrail_result = assistant_fnc.check_input(user_text)
+        
+        # Log user message
+        assistant_fnc.log_message("user", user_text)
+        
+        if guardrail_result.status == GuardrailStatus.BLOCKED:
+            # Input is blocked - inject guardrail message
+            logger.warning(f"Input blocked by guardrails: {user_text[:50]}...")
+            session.conversation.item.create(
+                llm.ChatMessage(
+                    role='assistant',
+                    content=guardrail_result.message
+                )
+            )
+            assistant_fnc.log_message("assistant", guardrail_result.message)
+            session.response.create()
+            return
+        
+        if guardrail_result.status == GuardrailStatus.REDIRECTED:
+            logger.info(f"Input redirected by guardrails: {user_text[:50]}...")
+            session.conversation.item.create(
+                llm.ChatMessage(
+                    role='assistant',
+                    content=guardrail_result.message
+                )
+            )
+            assistant_fnc.log_message("assistant", guardrail_result.message)
+            session.response.create()
+            return
+
+        # Input passed guardrails - proceed normally
         if assistant_fnc.has_car():
             handle_query(msg)
         else:
@@ -85,6 +126,11 @@ async def entrypoint(ctx: JobContext):
                 )
             )
             session.response.create()
+    
+    # Trigger welcome (returns SpeechHandle, non-blocking)
+    logger.info("Triggering welcome reply...")
+    session.generate_reply()
+    logger.info("Welcome triggered")
 
 if __name__ == '__main__':
     cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))

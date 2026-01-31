@@ -3,7 +3,7 @@ from livekit import api
 from flask import Flask, request
 from dotenv import load_dotenv
 from flask_cors import CORS
-from livekit.api import LiveKitAPI, ListRoomsRequest  # Fixed: LivekitAPI -> LiveKitAPI
+from livekit.api import LiveKitAPI, ListRoomsRequest  
 import uuid
 
 load_dotenv()
@@ -20,7 +20,7 @@ async def generate_room_name():
     return name
 
 async def get_rooms():
-    lk_api = LiveKitAPI()  # Renamed to avoid conflict with 'api' import
+    lk_api = LiveKitAPI()  
     rooms = await lk_api.room.list_rooms(ListRoomsRequest())
     await lk_api.aclose()
     return [room.name for room in rooms.rooms]
